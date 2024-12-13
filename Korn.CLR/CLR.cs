@@ -300,8 +300,6 @@ public unsafe struct clr_MethodDesc
 
     public static clr_MethodDesc* ExtractFrom(MethodInfo op)
     {
-        var a = *(nint*)(MethodInfo*)&op;
-
         if (op is DynamicMethod)
             return clr_Corelib_DynamicMethod.ExtractFrom(op)->MethodHandleInternal->Handle;
         else if (op.GetType().Name == "RuntimeMethodInfo")
@@ -411,6 +409,8 @@ public unsafe struct clr_Precode
         fixed (clr_Precode* self = &this)
             return (clr_StubPrecode*)self;
     }
+
+    public bool IsFixupPrecode() => GetType() == clr_FixupPrecode.Type;
 
     public clr_FixupPrecode* AsFixupPrecode()
     {
@@ -658,7 +658,7 @@ public unsafe struct clr_MethodDescChunk
     }
 }
 
-[StructLayout(LayoutKind.Sequential, Size = 0x28, Pack = 0)]
+[StructLayout(LayoutKind.Sequential, Size = 0x40, Pack = 0)]
 public unsafe struct clr_MethodTable
 {
     public int Flags;
@@ -681,10 +681,8 @@ public unsafe struct clr_MethodTable
         else return GetNonVirtualSlotsArray(AuxiliaryData) - (1 + (slotNumber - NumVirtuals));
     }
 
-    public void** GetNonVirtualSlotsArray(clr_MethodTableAuxiliaryData* auxiliaryData)
-    {
-        return (void**)((byte*)auxiliaryData + auxiliaryData->OffsetToNonVirtualSlots);
-    }
+    public void** GetNonVirtualSlotsArray(clr_MethodTableAuxiliaryData* auxiliaryData) 
+        => (void**)((byte*)auxiliaryData + auxiliaryData->OffsetToNonVirtualSlots);
 
     const int VTABLE_SLOTS_PER_CHUNK_LOG2 = 3;
     public int GetIndexOfVtableIndirection(int slotNumber) => slotNumber >> VTABLE_SLOTS_PER_CHUNK_LOG2;
