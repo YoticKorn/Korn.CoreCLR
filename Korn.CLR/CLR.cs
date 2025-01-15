@@ -1,8 +1,30 @@
 ﻿using System.Reflection.Emit;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Data;
 
 namespace Korn.CLR;
+
+[Flags]
+public enum CorMethodImpl : ushort
+{
+    IL = 0x0000,
+    Native = 0x0001,
+    OPTIL = 0x0002,
+    Runtime = 0x0003,
+
+    Unmanaged = 0x0004,
+
+    ForwardRef = 0x0010,
+    PreverseSig = 0x0080,
+
+    InternalCall = 0x1000,
+    Synchronized = 0x0020,
+    NoInlining = 0x0008,
+    AggressiveInlining = 0x0100,
+    NoOptimization = 0x0040,
+    AggressiveOptimization = 0x0200
+}
 
 [StructLayout(LayoutKind.Sequential, Size = 0x10, Pack = 0)]
 public unsafe struct clr_MethodDesc
@@ -71,11 +93,26 @@ public unsafe struct clr_MethodDesc
     public bool IsStatic => (Flags & MethodDescFlags.Static) != 0;
     public bool HasNonVtableSlot => (Flags & MethodDescFlags.HasNonVtableSlot) != 0;
     public bool MethodImpl => (Flags & MethodDescFlags.MethodImpl) != 0;
-    public bool HasNativeCodeSlot => (Flags & MethodDescFlags.HasNativeCodeSlot) != 0;
+    public bool HasNativeCodeSlot
+    {
+        get => (Flags & MethodDescFlags.HasNativeCodeSlot) != 0;
+        set => Flags = (short)(value ? (Flags | MethodDescFlags.HasNativeCodeSlot) : (Flags & ~MethodDescFlags.HasNativeCodeSlot));
+    }
+
+    public bool IsUnboxingStub
+    {
+        get => (Flags3 & MethodDescFlags3.IsUnboxingStub) != 0;
+        set => Flags3 = (ushort)(value ? (Flags3 | MethodDescFlags3.IsUnboxingStub) : (Flags3 & ~MethodDescFlags3.IsUnboxingStub));
+    }
+
+    public bool IsEligibleForTieredCompilation
+    {
+        get => (Flags3 & MethodDescFlags3.IsEligibleForTieredCompilation) != 0;
+        set => Flags3 = (ushort)(value ? (Flags3 | MethodDescFlags3.IsEligibleForTieredCompilation) : (Flags3 & ~MethodDescFlags3.IsEligibleForTieredCompilation));
+    }
 
     public bool HasStableEntryPoint => (Flags3 & MethodDescFlags3.HasStableEntryPoint) != 0;
     public bool HasPrecode => (Flags3 & MethodDescFlags3.HasPrecode) != 0;
-    public bool IsUnboxingStub => (Flags3 & MethodDescFlags3.IsUnboxingStub) != 0;
     public bool IsWrapperStub => IsUnboxingStub || IsInstantiatingStub;
     public bool IsMethodImpl => (Flags & MethodDescFlags.MethodImpl) != 0;
 
@@ -259,18 +296,11 @@ public unsafe struct clr_MethodDesc
         if (IsNoMetadata)
             return false;
 
-        var attributes = GetImplAttributes();
         //return IsMiNoOptimization(attributes) || IsMiAggressiveOptimization(attributes);
         throw new NotImplementedException();
     }
 
-    public int GetImplAttributes()
-    {
-        int props;
-        //GetMDImport()->GetMethodImplProps(GetMemberDef(), null, &props);
-        throw new NotImplementedException();
-        return props;
-    }
+    public CorMethodImpl* ImplAttributes => GetMDImport()->GetMethodImpl(GetMemberDef());
 
     public clr_mdMethodDef GetMemberDef()
     {
@@ -297,6 +327,8 @@ public unsafe struct clr_MethodDesc
     }
 
     public void* GetStableEntryPoint() => GetMethodEntryPointIfExists();
+
+    public static clr_MethodDesc* ExtractFrom(Delegate delegateOp) => ExtractFrom(delegateOp.Method);
 
     public static clr_MethodDesc* ExtractFrom(MethodInfo op)
     {
@@ -368,6 +400,7 @@ public unsafe struct clr_mdMethodDef
     public static implicit operator uint(clr_mdMethodDef self) => *(uint*)&self;
     public static implicit operator clr_mdMethodDef(uint self) => *(clr_mdMethodDef*)&self;
     public static implicit operator clr_mdMethodDef(clr_mdToken self) => *(clr_mdMethodDef*)&self;
+    public static implicit operator clr_mdToken(clr_mdMethodDef self) => *(clr_mdToken*)&self;
 }
 
 public unsafe struct clr_mdToken
@@ -394,9 +427,17 @@ public unsafe struct clr_InstantiatedMethodDesc
     }
 
     public clr_MethodDesc BaseMethodDesc;
+    public short Flags2;
+    public short NumGenericArgs;
 
-    public bool IMD_IsWrapperStubWithInstantiations()
-        => (BaseMethodDesc.Flags & InstantiatedMethodDescFlags2.KindMask) == InstantiatedMethodDescFlags2.WrapperStubWithInstantiations;
+    public byte Kind
+    {
+        get => (byte)(Flags2 & InstantiatedMethodDescFlags2.KindMask);
+        set => Flags2 = (short)((Flags2 & ~InstantiatedMethodDescFlags2.KindMask) | value);
+    }
+
+    public bool IMD_IsWrapperStubWithInstantiations() 
+        => Kind == InstantiatedMethodDescFlags2.WrapperStubWithInstantiations;
 }
 
 public unsafe struct clr_Precode
@@ -1115,6 +1156,9 @@ public unsafe struct clr_IMDInternalImport
     [FieldOffset(0x00)]
     public vtable* VTable;
 
+    [FieldOffset(0x08)]
+    public clr_CMiniMd* Row;
+
     [FieldOffset(0x10)]
     public clr_CLiteWeightStgdb<clr_CMiniMd> LiteWeightStgdb;
 
@@ -1138,6 +1182,27 @@ public unsafe struct clr_IMDInternalImport
         return 1;
     }
 
+    // ?GetMethodImplProps@MDInternalRO@
+    public CorMethodImpl* GetMethodImpl(uint token)
+    {
+        var record = GetMethodImplRecord(token);
+        return (CorMethodImpl*)record + 2;
+    }
+
+    public void* GetMethodImplRecord(uint token)
+    {
+        clr_IMDInternalImport* self;
+        fixed (clr_IMDInternalImport* self_ = &this)
+            self = self_;
+
+        var tokenPart = token & 0xFFFFFF;
+        if (tokenPart == 0 || tokenPart > self->LiteWeightStgdb.MiniMd.Schema.Records[6])
+            throw new Exception();
+
+        var record = &self->LiteWeightStgdb.MiniMd.Tables[6].Data[self->LiteWeightStgdb.MiniMd.TableDefs[6].Record * (tokenPart - 1)];
+        return record;
+    }
+
     [StructLayout(LayoutKind.Explicit)]
     public struct vtable
     {
@@ -1155,7 +1220,87 @@ public unsafe struct clr_CLiteWeightStgdb<T> where T : unmanaged
 public unsafe struct clr_CMiniMd
 {
     [FieldOffset(0x08)]
-    public clr_CMiniMdScheme Scheme;
+    public clr_CMiniMdScheme Schema;
+
+    [FieldOffset(0xE0)]
+    public fixed long TableDefsRaw[45];
+
+    public clr_CMiniTableDef* TableDefs
+    {
+        get
+        {
+            fixed (long* tables = TableDefsRaw)
+                return (clr_CMiniTableDef*)tables;
+        }
+    }
+
+    [FieldOffset(0x3C0)]
+    public fixed long TablesRaw[45];
+
+    public clr_TableRO* Tables
+    {
+        get
+        {
+            fixed (long* tables = TablesRaw)
+                return (clr_TableRO*)tables;
+        }
+    }
+
+    public void* FindHotRow(int offset, uint token)
+    {
+        clr_CMiniMd* self;
+        fixed (clr_CMiniMd* self_ = &this)
+            self = self_;
+
+        long v4;
+        short v5;
+        long v6;
+        uint v7;
+        int v8;
+        long v9;
+        long v10;
+        long v11;
+        long v13;
+
+        v4 = *((nint*)self + 165) + *(int*)(*((nint*)self + 165) + 4L * offset + 4);
+        if (*(int*)(v4 + 4) != 0)
+        {
+            v5 = *(short*)(v4 + 16);
+            v6 = v4 + *(uint*)(v4 + 4);
+            v7 = token >> v5;
+            v8 = (1 << v5) - 1;
+            v9 = *(ushort*)(v6 + 2 * (token & v8));
+            v10 = *(ushort*)(v6 + 2 * ((token & v8) + 1));
+            v11 = v9;
+            if (v9 >= v10)
+                return (void*)(*((nint*)self + (uint)offset + 120)
+                    +token * *((ushort*)self + 8 * (uint)offset + 117));
+            while (*(byte*)(v11 + v4 + *(uint*)(v4 + 8)) != (byte)v7 )
+            {
+                ++v11;
+                *(int*)&v9 = (int)(v9 + 1);
+                if (v11 >= v10)
+                    return (void*)(*((nint*)self + (uint)offset + 120)
+                      +token * *((ushort*)self + 8 * (uint)offset + 117));
+            }
+            v13 = v4 + (int)(v9 * *((ushort*)self + 8 * (uint)offset + 117));
+        }
+        else v13 = v4 + (token - 1) * *((ushort*)self + 8 * (uint)offset + 117);
+        return (void*)(v13 + *(uint*)(v4 + 12));
+    }
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public unsafe struct clr_CMiniTableDef
+{
+    [FieldOffset(0x0A)]
+    public ushort Record;
+}
+
+[StructLayout(LayoutKind.Sequential, Size = 0x08)]
+public unsafe struct clr_TableRO
+{
+    public byte* Data;
 }
 
 [StructLayout(LayoutKind.Explicit, Size = 0xD0)]
