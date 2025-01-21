@@ -1,9 +1,9 @@
-﻿using System.Reflection.Emit;
+﻿#if NET8_0
+using System.Reflection.Emit;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Data;
 
-namespace Korn.CLR;
+namespace Korn.CoreCLR;
 
 [Flags]
 public enum CorMethodImpl : ushort
@@ -1417,3 +1417,4 @@ public unsafe struct clr_FirstArrayListBlock<T> where T : unmanaged
 
     public T* GetArrayElement(int index) => (T*)(nint)array[index];
 }
+#endif
