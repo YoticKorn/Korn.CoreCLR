@@ -1273,15 +1273,13 @@ public unsafe struct clr_CMiniMd
             v10 = *(ushort*)(v6 + 2 * ((token & v8) + 1));
             v11 = v9;
             if (v9 >= v10)
-                return (void*)(*((nint*)self + (uint)offset + 120)
-                    +token * *((ushort*)self + 8 * (uint)offset + 117));
+                return (void*)(*((nint*)self + (uint)offset + 120) + token * *((ushort*)self + 8 * (uint)offset + 117));
             while (*(byte*)(v11 + v4 + *(uint*)(v4 + 8)) != (byte)v7 )
             {
                 ++v11;
                 *(int*)&v9 = (int)(v9 + 1);
                 if (v11 >= v10)
-                    return (void*)(*((nint*)self + (uint)offset + 120)
-                      +token * *((ushort*)self + 8 * (uint)offset + 117));
+                    return (void*)(*((nint*)self + (uint)offset + 120) + token * *((ushort*)self + 8 * (uint)offset + 117));
             }
             v13 = v4 + (int)(v9 * *((ushort*)self + 8 * (uint)offset + 117));
         }
