@@ -205,8 +205,6 @@ public unsafe struct clr_MethodDesc
 
     public void* GetTemporaryEntryPointIfExists()
     {
-        // var flags4 = Volatile.Load(); nah, I don't even want to implement that lame code.
-
         if ((Flags4 & MethodDescFlags4.TemporaryEntryPointAssigned) != 0)
             return CodeData->TemporaryEntryPoint;
 
@@ -612,11 +610,6 @@ public unsafe struct clr_Class
     public static void* GetEEFuncEntryPoint() => PreStub;
 }
 
-public unsafe struct Volatile
-{
-    public static T Load<T>(T* pointer) where T : unmanaged => *pointer;
-}
-
 public unsafe struct StdMacroses
 {
     public static bool IS_ALIGNED(void* address, int value) => IS_ALIGNED((nint)address, value);
@@ -772,8 +765,6 @@ public unsafe struct clr_MethodDescCodeData
 public unsafe struct clr_MethodDescVersioningState
 {
     public clr_MethodDesc* MethodDesc;
-    byte Flags;
-    //…
 }
 
 [StructLayout(LayoutKind.Explicit)]
@@ -799,45 +790,6 @@ public unsafe struct clr_Corelib_RuntimeMethodStub
 {
     [FieldOffset(0x50)]
     public clr_MethodDesc* Handle;
-}
-
-public unsafe struct ArrayListInterator<T> where T : unmanaged
-{
-    public ArrayListInterator(clr_ArrayList<T> array) => this.array = array;
-
-    clr_ArrayList<T> array;
-
-    public List<nint> ToList()
-    {
-        List<nint> result = [];
-
-        var count = array.Count;
-        var firstBlock = array.FirstBlock;
-        for (var i = 0; i < firstBlock.BlockSize; i++)
-        {
-            var element = firstBlock.GetArrayElement(i);
-            result.Add((nint)element);
-            if (result.Count == count)
-                goto RETURN;
-        }
-
-        var next = firstBlock.Next;
-        while (next is not null)
-        {
-            for (var i = 0; i < next->BlockSize; i++)
-            {
-                var element = next->GetArrayElement(i);
-                result.Add((nint)element);
-                if (result.Count == count)
-                    goto RETURN;
-            }
-
-            next = next->Next;
-        }
-
-    RETURN:
-        return result;
-    }
 }
 
 static class CoreClr
@@ -873,68 +825,8 @@ unsafe static class Interop
 {
     const string kernel = "kernel32";
 
-    [DllImport(kernel)]
-    public static extern
+    [DllImport(kernel)] public static extern 
         nint GetModuleHandle(string name);
-
-    [DllImport(kernel)]
-    public static extern
-        nint VirtualAlloc(nint address, long size, MemoryState allocationType, MemoryProtect protect);
-
-    [DllImport(kernel)]
-    public static extern
-        bool VirtualFree(nint address, long size, MemoryFreeType freeType);
-
-    public static void CopyMemory(void* to, void* from, int byteLength) => Buffer.MemoryCopy(from, to, byteLength, byteLength);
-
-    public static void WriteMemory(void* to, void* from, int len) => CopyMemory(to, from, len);
-
-    public static void WriteMemory(void* str, byte[] array)
-    {
-        fixed (byte* pointer = array)
-            WriteMemory(str, pointer, array.Length);
-    }
-}
-
-unsafe struct MBI
-{
-    public nint BaseAddress;
-    public nint AllocationBase;
-    public uint AllocationProtect;
-    public nint RegionSize;
-    public int State;
-    public int Protect;
-    public int Type;
-}
-
-public enum MemoryFreeType
-{
-    Decommit = 0x4000,
-    Release = 0x8000,
-}
-
-public enum MemoryState
-{
-    Commit = 0x1000,
-    Free = 0x10000,
-    Reserve = 0x2000
-}
-
-[Flags]
-public enum MemoryProtect
-{
-    ZeroAccess = 0,
-    NoAccess = 1,
-    ReadOnly = 2,
-    ReadWrite = 4,
-    WriteCopy = 8,
-    Execute = 16,
-    ExecuteRead = 32,
-    ExecuteReadWrite = 64,
-    ExecuteWriteCopy = 128,
-    Guard = 256,
-    ReadWriteGuard = 260,
-    NoCache = 512
 }
 
 enum ClassLoadLevel
@@ -963,54 +855,11 @@ public unsafe struct clr_System_RuntimeType
     public clr_TypeHandle TypeHandle;
 }
 
-[StructLayout(LayoutKind.Sequential, Size = 0x18)]
-public unsafe struct clr_PtrArray<T> where T : unmanaged
-{
-    public clr_ArrayBase ArrayBase;
-
-    nint x08;
-
-    public T* Array;
-
-    public List<nint> ToList()
-    {
-        var count = ArrayBase.Count;
-        var result = new List<nint>(count);
-        for (var i = 0; i < count; i++)
-            result.Add((nint)(Array + i));
-
-        return result;
-    }
-}
-
-[StructLayout(LayoutKind.Explicit, Size = 0x10)]
-public unsafe struct clr_ArrayBase
-{
-    [FieldOffset(0x00)]
-    public clr_Object Object;
-
-    [FieldOffset(0x08)]
-    public int Count;
-}
-
 [StructLayout(LayoutKind.Explicit, Size = 0x08)]
 public unsafe struct clr_Object
 {
     [FieldOffset(0x00)]
     public nint MethodTable;
-}
-
-[StructLayout(LayoutKind.Explicit)]
-public unsafe struct clr_AppDomain
-{
-    static clr_AppDomain** appDomainPointer = (clr_AppDomain**)(CoreClr.ModuleHandle + UnsafeAccessOffsets.Coreclr_AppDomain_m_pTheAppDomain);
-    public static clr_AppDomain* AppDomain = *appDomainPointer;
-
-    [FieldOffset(0x4B8)]
-    public clr_DomainAssemblyList Assemblies;
-
-    [FieldOffset(0x590)]
-    public clr_Assembly* RootAssembly;
 }
 
 [StructLayout(LayoutKind.Explicit, Size = 0x58)]
@@ -1032,9 +881,6 @@ public unsafe struct clr_Assembly
 [StructLayout(LayoutKind.Explicit, Size = 0xA8)]
 public unsafe struct clr_ModuleBase
 {
-    [FieldOffset(0x00)]
-    public vtable* VTable;
-
     [FieldOffset(0xC8)]
     public clr_Assembly* Assembly;
 
@@ -1042,9 +888,6 @@ public unsafe struct clr_ModuleBase
     public clr_LoaderAllocator* LoaderAllocator;
 
     public clr_LoaderAllocator* GetLoaderAllocator() => LoaderAllocator;
-
-    [StructLayout(LayoutKind.Explicit)]
-    public struct vtable { }
 }
 
 [StructLayout(LayoutKind.Explicit, Size = 0x3B0)]
@@ -1088,57 +931,17 @@ public unsafe struct clr_Module
     [FieldOffset(0xB8)]
     public uint TransientFlags;
 
-    [FieldOffset(0x2E8)]
-    public clr_DomainLocalModule* ModuleID;
-
     public bool IsReflectionEmit => (TransientFlags & IS_REFLECTION_EMIT) != 0;
-
-    public clr_PtrArray<clr_System_RuntimeType>* GetManagedTypes()
-    {
-        fixed (clr_Module* self = &this)
-            return ((delegate* unmanaged<clr_Module*, clr_PtrArray<clr_System_RuntimeType>*>)GetTypesInnerDelegate)(self);
-    }
-
-    public List<clr_TypeHandle> GetTypes()
-    {
-        var list = GetManagedTypes()->ToList();
-        var result = new List<clr_TypeHandle>(list.Count);
-        foreach (var item in list)
-        {
-            var type = (clr_System_RuntimeType*)item;
-            result.Add(type->TypeHandle);
-        }
-
-        return result;
-    }
 
     public clr_IMDInternalImport* GetMDImport()
     {
         if (IsReflectionEmit)
-            return DacGetMDImport(GetReflectionModule(), true);
+            throw new NotImplementedException("hah, it's to hard implement");
 
         return PEAssembly->GetMDImport();
     }
 
-    public clr_IMDInternalImport* DacGetMDImport(clr_ReflectedModule* reflectionModule, bool throwEx)
-        => throw new NotImplementedException("hah, it's to hard implement");
-
-    public clr_ReflectedModule* GetReflectionModule()
-    {
-        fixed (clr_Module* self = &this)
-            return (clr_ReflectedModule*)self;
-    }
-
     public clr_LoaderAllocator* GetLoaderAllocator() => AsModuleBase->GetLoaderAllocator();
-}
-
-public struct clr_ReflectedModule { }
-
-[StructLayout(LayoutKind.Explicit)]
-public unsafe struct clr_DomainLocalModule
-{
-    [FieldOffset(0x00)]
-    public clr_DomainAssembly* DomainAssembly;
 }
 
 [StructLayout(LayoutKind.Explicit)]
@@ -1153,34 +956,11 @@ public unsafe struct clr_PEAssembly
 [StructLayout(LayoutKind.Explicit)]
 public unsafe struct clr_IMDInternalImport
 {
-    [FieldOffset(0x00)]
-    public vtable* VTable;
-
     [FieldOffset(0x08)]
     public clr_CMiniMd* Row;
 
     [FieldOffset(0x10)]
-    public clr_CLiteWeightStgdb<clr_CMiniMd> LiteWeightStgdb;
-
-    public int EnumNext(clr_HENUMInternal* hEnum, int* token)
-    {
-        int current = hEnum->U.Current;
-        if ((uint)current >= hEnum->U.End)
-            return 0;
-
-        if (hEnum->EnumType != 0)
-        {
-            hEnum->U.Current = current + 1;
-            *token = *((int*)&hEnum->U4 + current);
-        }
-        else
-        {
-            *token = hEnum->Kind | current;
-            ++hEnum->U.Current;
-        }
-
-        return 1;
-    }
+    public clr_CLiteWeightStgdb LiteWeightStgdb;
 
     // ?GetMethodImplProps@MDInternalRO@
     public CorMethodImpl* GetMethodImpl(uint token)
@@ -1202,16 +982,9 @@ public unsafe struct clr_IMDInternalImport
         var record = &self->LiteWeightStgdb.MiniMd.Tables[6].Data[self->LiteWeightStgdb.MiniMd.TableDefs[6].Record * (tokenPart - 1)];
         return record;
     }
-
-    [StructLayout(LayoutKind.Explicit)]
-    public struct vtable
-    {
-        [FieldOffset(0x20)]
-        public delegate* unmanaged<clr_IMDInternalImport*, clr_HENUMInternal*, clr_HResult> EnumTypeDefInit;
-    }
 }
 
-public unsafe struct clr_CLiteWeightStgdb<T> where T : unmanaged
+public unsafe struct clr_CLiteWeightStgdb
 {
     public clr_CMiniMd MiniMd;
 }
@@ -1310,58 +1083,6 @@ public unsafe struct clr_CMiniMdScheme
 
 public enum clr_HResult : int { }
 
-[StructLayout(LayoutKind.Explicit, Size = 0x48)]
-public unsafe struct clr_HENUMTypeDefInternalHolder
-{
-    [FieldOffset(0x00)]
-    public clr_IMDInternalImport* InternalImport;
-
-    [FieldOffset(0x08)]
-    public clr_HENUMInternal Enum;
-
-    [FieldOffset(0x40)]
-    public int Acquired;
-}
-
-[StructLayout(LayoutKind.Explicit, Size = 0x38)]
-public unsafe struct clr_HENUMInternal
-{
-    [FieldOffset(0x00)]
-    public int Kind;
-
-    [FieldOffset(0x04)]
-    public int Count;
-
-    [FieldOffset(0x08)]
-    public int EnumType;
-
-    [FieldOffset(0x0C)]
-    public Unnamed U;
-
-    [FieldOffset(0x18)]
-    public D6B39EC5995399DFFF9242F54E85023C U4;
-
-    [StructLayout(LayoutKind.Explicit, Size = 0x0C)]
-    public struct Unnamed
-    {
-        [FieldOffset(0x00)]
-        public int Start;
-
-        [FieldOffset(0x04)]
-        public int End;
-
-        [FieldOffset(0x08)]
-        public int Current;
-    }
-
-    [StructLayout(LayoutKind.Explicit, Size = 0x20)]
-    public struct D6B39EC5995399DFFF9242F54E85023C
-    {
-        [FieldOffset(0x00)]
-        public long AlignPad;
-    }
-}
-
 public unsafe struct clr_Utf8String
 {
     public nint Address;
@@ -1369,50 +1090,5 @@ public unsafe struct clr_Utf8String
     public override string ToString() => ReadFromMemory(Address);
 
     public string ReadFromMemory(nint address) => new string((sbyte*)address);
-}
-
-[StructLayout(LayoutKind.Explicit)]
-public unsafe struct clr_DomainAssemblyList
-{
-    [FieldOffset(0x00)]
-    public clr_ArrayList<clr_Assembly> Array;
-}
-
-public unsafe struct clr_DomainAssembly { }
-
-public unsafe struct clr_ArrayList<T> where T : unmanaged
-{
-    public int Count;
-
-    public clr_FirstArrayListBlock<T> FirstBlock;
-
-    public List<nint> ToList() => new ArrayListInterator<T>(this).ToList();
-}
-
-[StructLayout(LayoutKind.Sequential, Pack = 0)]
-public unsafe struct clr_ArrayListBlock<T> where T : unmanaged
-{
-    public clr_ArrayListBlock<T>* Next;
-    public int BlockSize;
-    int padding;
-
-    public T* GetArrayElement(int index)
-    {
-        fixed (clr_ArrayListBlock<T>* pointer = &this)
-            return (T*)*((nint*)(pointer + 1) + index);
-    }
-}
-
-[StructLayout(LayoutKind.Sequential, Pack = 0)]
-public unsafe struct clr_FirstArrayListBlock<T> where T : unmanaged
-{
-    const int ARRAY_BLOCK_SIZE_START = 5;
-
-    public clr_ArrayListBlock<T>* Next;
-    public int BlockSize;
-    int padding;
-    fixed long array[ARRAY_BLOCK_SIZE_START];
-
-    public T* GetArrayElement(int index) => (T*)(nint)array[index];
 }
 #endif
